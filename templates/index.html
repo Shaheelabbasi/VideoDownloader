@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Video Downloader</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: #f5f7fb;
+        color: #1f2a44;
+      }
+      .wrap {
+        max-width: 720px;
+        margin: 48px auto;
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(31, 42, 68, 0.12);
+        padding: 28px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: #4b5a7a;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+      }
+      input[type="text"] {
+        flex: 1;
+        padding: 12px 14px;
+        border: 1px solid #d6deef;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      button {
+        padding: 12px 16px;
+        border: none;
+        border-radius: 8px;
+        background: #2a6df4;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        margin-top: 18px;
+        padding: 12px;
+        background: #f0f4ff;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .status strong {
+        display: inline-block;
+        min-width: 90px;
+      }
+      .download-link {
+        display: inline-block;
+        margin-top: 8px;
+        color: #2a6df4;
+        text-decoration: none;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>YouTube Downloader</h1>
+      <p>Paste a video URL, start the download, and grab the file when it's ready.</p>
+
+      <div class="row">
+        <input id="urlInput" type="text" placeholder="https://youtube.com/shorts/..." />
+        <button id="previewBtn">Preview</button>
+        <button id="startBtn" disabled>Download</button>
+      </div>
+
+      <div id="previewBox" class="status" hidden></div>
+      <div id="statusBox" class="status" hidden></div>
+    </div>
+
+    <script>
+      const urlInput = document.getElementById("urlInput");
+      const previewBtn = document.getElementById("previewBtn");
+      const startBtn = document.getElementById("startBtn");
+      const previewBox = document.getElementById("previewBox");
+      const statusBox = document.getElementById("statusBox");
+
+      let pollTimer = null;
+
+      function setPreview(html) {
+        previewBox.innerHTML = html;
+        previewBox.hidden = false;
+      }
+
+      function setStatus(html) {
+        statusBox.innerHTML = html;
+        statusBox.hidden = false;
+      }
+
+      async function loadPreview() {
+        const url = urlInput.value.trim();
+        if (!url) {
+          setPreview("<strong>Error:</strong> Please enter a URL.");
+          startBtn.disabled = true;
+          return;
+        }
+
+        previewBtn.disabled = true;
+        setPreview("<strong>Status:</strong> Fetching preview...");
+
+        try {
+          const res = await fetch("/api/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Failed to fetch preview");
+          }
+
+          const thumb = data.thumbnail
+            ? `<img src="${data.thumbnail}" alt="Thumbnail" style="width: 100%; max-width: 360px; border-radius: 8px; margin: 8px 0;" />`
+            : "";
+          const title = data.title ? `<div><strong>Title:</strong> ${data.title}</div>` : "";
+          const uploader = data.uploader ? `<div><strong>Uploader:</strong> ${data.uploader}</div>` : "";
+          const duration = data.duration ? `<div><strong>Duration:</strong> ${data.duration}s</div>` : "";
+
+          setPreview(`${thumb}${title}${uploader}${duration}`);
+          startBtn.disabled = false;
+        } catch (err) {
+          setPreview(`<strong>Error:</strong> ${err.message}`);
+          startBtn.disabled = true;
+        } finally {
+          previewBtn.disabled = false;
+        }
+      }
+
+      async function startDownload() {
+        const url = urlInput.value.trim();
+        if (!url) {
+          setStatus("<strong>Error:</strong> Please enter a URL.");
+          return;
+        }
+
+        startBtn.disabled = true;
+        setStatus("<strong>Status:</strong> Starting...");
+
+        try {
+          const res = await fetch("/api/download", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Failed to start download");
+          }
+
+          pollStatus(data.job_id);
+          pollTimer = setInterval(() => pollStatus(data.job_id), 1200);
+        } catch (err) {
+          setStatus(`<strong>Error:</strong> ${err.message}`);
+          startBtn.disabled = false;
+        }
+      }
+
+      async function pollStatus(jobId) {
+        try {
+          const res = await fetch(`/api/status/${jobId}`);
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Status error");
+          }
+
+          if (data.status === "completed") {
+            clearInterval(pollTimer);
+            const downloadUrl = data.download_url;
+            setStatus(
+              `<strong>Status:</strong> Completed.<br />` +
+                `<a id="downloadLink" class="download-link" href="${downloadUrl}">Download file</a>`
+            );
+            // Trigger a normal browser download as soon as the file is ready.
+            const link = document.getElementById("downloadLink");
+            if (link) {
+              link.click();
+            }
+            startBtn.disabled = false;
+            return;
+          }
+
+          if (data.status === "error") {
+            clearInterval(pollTimer);
+            setStatus(`<strong>Error:</strong> ${data.error}`);
+            startBtn.disabled = false;
+            return;
+          }
+
+          const progress = data.percent || "0%";
+          const speed = data.speed ? ` | ${data.speed}` : "";
+          const eta = data.eta ? ` | ETA ${data.eta}` : "";
+          setStatus(`<strong>Status:</strong> ${data.status} (${progress}${speed}${eta})`);
+        } catch (err) {
+          clearInterval(pollTimer);
+          setStatus(`<strong>Error:</strong> ${err.message}`);
+          startBtn.disabled = false;
+        }
+      }
+
+      previewBtn.addEventListener("click", loadPreview);
+      startBtn.addEventListener("click", startDownload);
+    </script>
+  </body>
+</html>
