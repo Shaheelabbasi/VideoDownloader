@@ -22,6 +22,7 @@ MAX_QUEUE = int(os.getenv("MAX_QUEUE", "50"))
 FILE_TTL_SECONDS = int(os.getenv("FILE_TTL_SECONDS", "86400"))
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").strip()
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
+YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip()
 
 # In-memory job store: {job_id: {...}}
 JOBS = {}
@@ -67,6 +68,8 @@ def _download_worker(job_id, url):
             "retries": 3,
             "fragment_retries": 3,
         }
+        if YTDLP_COOKIES_FILE:
+            ydl_opts["cookiefile"] = YTDLP_COOKIES_FILE
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -209,6 +212,8 @@ def api_preview():
         "quiet": True,
         "no_warnings": True,
     }
+    if YTDLP_COOKIES_FILE:
+        ydl_opts["cookiefile"] = YTDLP_COOKIES_FILE
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
